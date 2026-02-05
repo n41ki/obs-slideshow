@@ -1,4 +1,4 @@
-# OBS Slideshow Overlay (P2P Sync)
+# IRL-Overlays (Slideshow P2P)
 
 Aplicación simple para OBS Studio que permite gestionar un carrusel de imágenes en tiempo real desde cualquier navegador.
 
