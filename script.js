@@ -118,21 +118,36 @@ function initControlPanel() {
     });
 
     function updateStatus(active) {
+        if (!startBtn) return;
         startBtn.style.opacity = active ? '0.5' : '1';
-        startBtn.textContent = active ? 'Ejecutando...' : 'Iniciar Slideshow';
+        startBtn.innerHTML = active
+            ? '<i class="fas fa-spinner fa-spin"></i> Ejecutando...'
+            : '<i class="fas fa-play"></i> Iniciar';
         startBtn.style.pointerEvents = active ? 'none' : 'auto';
+
+        // Update sidebar status dot if needed
+        const dot = document.querySelector('.status-indicator .dot');
+        if (dot) {
+            dot.style.backgroundColor = active ? '#22c55e' : '#a1a1aa';
+            dot.style.boxShadow = active ? '0 0 8px #22c55e' : 'none';
+        }
+    }
+
+    function createSlot(index, existingImage) {
+        const slot = document.createElement('div');
+        slot.className = 'image-slot';
+        slot.innerHTML = existingImage
+            ? `<img src="${existingImage}"><div class="remove-btn" data-index="${index}"><i class="fas fa-times"></i></div>`
+            : `<span class="slot-label"><i class="fas fa-plus"></i></span><input type="file" accept="image/*" data-index="${index}">`;
+
+        return slot;
     }
 
     function refreshSlots() {
         imageSlots.innerHTML = '';
         const d = getStorageData();
         d.images.forEach((img, i) => {
-            const slot = document.createElement('div');
-            slot.className = 'image-slot';
-            slot.innerHTML = img
-                ? `<img src="${img}"><div class="remove-btn">×</div>`
-                : `<span class="slot-label">+</span><input type="file" accept="image/*">`;
-
+            const slot = createSlot(i, img);
             imageSlots.appendChild(slot);
 
             const input = slot.querySelector('input');
