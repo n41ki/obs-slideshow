@@ -17,18 +17,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// Generar un ID único para esta sesión de pestaña
+const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
+
 // --- SHARED DATA UTILS ---
 function getStorageData() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : {
+        const baseData = raw ? JSON.parse(raw) : {
             images: [null, null, null, null, null],
             interval: 5,
-            active: false,
-            peerId: 'obs-' + Math.random().toString(36).substr(2, 6) // ID persistente
+            active: false
         };
+        // Siempre usamos el ID único de esta pestaña
+        return { ...baseData, peerId: SESSION_ID };
     } catch (e) {
-        return { images: [null, null, null, null, null], interval: 5, active: false, peerId: 'obs-error' };
+        return { images: [null, null, null, null, null], interval: 5, active: false, peerId: SESSION_ID };
     }
 }
 
@@ -48,26 +52,25 @@ function saveData(data) {
 // --- CONTROL PANEL LOGIC ---
 function initControlPanel() {
     const data = getStorageData();
-    const syncIdLabel = document.getElementById('sync-id');
     const imageSlots = document.getElementById('image-slots');
     const intervalInput = document.getElementById('interval');
     const startBtn = document.getElementById('start-btn');
     const stopBtn = document.getElementById('stop-btn');
     const copyBtn = document.getElementById('copy-btn');
+    const obsLinkElement = document.getElementById('obs-link');
+
+    // Generar y mostrar link INMEDIATAMENTE
+    const fullObsUrl = `https://n41ki.github.io/obs-slideshow/overlay.html?id=${SESSION_ID}`;
+    if (obsLinkElement) {
+        obsLinkElement.textContent = fullObsUrl;
+        obsLinkElement.dataset.url = fullObsUrl;
+    }
 
     // Inicializar Peer (Panel es el Host)
-    peer = new Peer(data.peerId);
+    peer = new Peer(SESSION_ID);
 
     peer.on('open', (id) => {
-        // Generar URL completa para OBS con la base solicitada
-        const fullObsUrl = `https://n41ki.github.io/obs-slideshow/overlay.html?id=${id}`;
-        const linkElement = document.getElementById('obs-link');
-        if (linkElement) {
-            linkElement.textContent = fullObsUrl;
-            // Guardar para el botón copiar
-            linkElement.dataset.url = fullObsUrl;
-        }
-        console.log('ID de Panel:', id);
+        console.log('ID de Panel listo:', id);
     });
 
     peer.on('connection', (conn) => {
