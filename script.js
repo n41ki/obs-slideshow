@@ -1,11 +1,11 @@
 /**
- * OBS Slideshow Overlay Script (P2P Version)
- * Permite sincronizar el Panel (Navegador) con el Overlay (OBS) en tiempo real sin servidor.
+ * IRL-Overlays Script (P2P Version)
+ * Sincronización en tiempo real sin servidor usando PeerJS.
  */
 
 const STORAGE_KEY = 'obs_slideshow_data';
 let peer = null;
-let connections = []; // Soporte para múltiples conexiones (múltiples OBS o refrescos)
+let connections = [];
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,6 +19,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Generar un ID único para esta sesión de pestaña
 const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
+
+const PEER_CONFIG = {
+    host: '0.peerjs.com',
+    port: 443,
+    secure: true,
+    config: {
+        'iceServers': [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+        ],
+        'sdpSemantics': 'unified-plan'
+    },
+    debug: 1
+};
 
 // --- SHARED DATA UTILS ---
 function broadcast(data) {
@@ -43,7 +58,7 @@ function getStorageData() {
 function saveData(data) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        broadcast(data); // Enviar a todos los overlays conectados
+        broadcast(data);
         return true;
     } catch (e) {
         alert('Error: Imágenes demasiado pesadas. Intenta con archivos inferiores a 1MB.');
@@ -51,21 +66,9 @@ function saveData(data) {
     }
 }
 
-const PEER_CONFIG = {
-    config: {
-        'iceServers': [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-        ]
-    },
-    debug: 1 // Solo errores en consola
-};
-
 // --- CONTROL PANEL LOGIC ---
 function initControlPanel() {
-    // Limpiar almacenamiento al cargar/refrescar (según petición del usuario)
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY); // Reset on refresh
 
     const data = getStorageData();
     const imageSlots = document.getElementById('image-slots');
@@ -76,7 +79,6 @@ function initControlPanel() {
     const obsLinkElement = document.getElementById('obs-link');
     const syncIdLabel = document.getElementById('sync-id');
 
-    // Generar y mostrar link INMEDIATAMENTE
     const fullObsUrl = `https://n41ki.github.io/obs-slideshow/overlay.html?id=${SESSION_ID}`;
     if (obsLinkElement) {
         obsLinkElement.textContent = fullObsUrl;
@@ -84,39 +86,38 @@ function initControlPanel() {
     }
     if (syncIdLabel) syncIdLabel.textContent = SESSION_ID;
 
-    // Inicializar Peer (Panel es el Host) con STUN
-    peer = new Peer(SESSION_ID, PEER_CONFIG);
+    function startPeer() {
+        if (peer) peer.destroy();
+        peer = new Peer(SESSION_ID, PEER_CONFIG);
 
-    peer.on('open', (id) => {
-        console.log('Panel listo con ID:', id);
-    });
+        peer.on('open', (id) => console.log('Panel listo:', id));
 
-    peer.on('connection', (conn) => {
-        connections.push(conn);
-        console.log('Nuevo overlay conectado:', conn.peer);
-
-        conn.on('open', () => {
-            conn.send(getStorageData());
-            updateStatus(getStorageData().active);
+        peer.on('connection', (conn) => {
+            connections.push(conn);
+            conn.on('open', () => {
+                conn.send(getStorageData());
+                updateUIState(getStorageData().active);
+            });
+            conn.on('close', () => {
+                connections = connections.filter(c => c.peer !== conn.peer);
+                updateUIState(getStorageData().active);
+            });
         });
 
-        conn.on('close', () => {
-            connections = connections.filter(c => c.peer !== conn.peer);
-            console.log('Overlay desconectado');
+        peer.on('error', (err) => {
+            console.error('Peer Error:', err.type);
+            if (err.type === 'network' || err.type === 'server-error') {
+                setTimeout(startPeer, 5000);
+            }
         });
-    });
+    }
 
-    peer.on('error', (err) => {
-        console.error('Error PeerJS:', err);
-        if (err.type === 'unavailable-id') {
-            alert('Error: El ID ya está en uso. Refresca la página para generar uno nuevo.');
-        }
-    });
+    startPeer();
 
     // UI Setup
     intervalInput.value = data.interval;
     refreshSlots();
-    updateStatus(data.active);
+    updateUIState(data.active);
 
     intervalInput.addEventListener('change', () => {
         const d = getStorageData();
@@ -129,58 +130,49 @@ function initControlPanel() {
         if (!d.images.some(img => img !== null)) return alert('Inserta imágenes primero.');
         d.active = true;
         saveData(d);
-        updateStatus(true);
+        updateUIState(true);
     });
 
     stopBtn.addEventListener('click', () => {
         const d = getStorageData();
         d.active = false;
         saveData(d);
-        updateStatus(false);
+        updateUIState(false);
     });
 
     copyBtn.addEventListener('click', () => {
-        const linkElement = document.getElementById('obs-link');
-        const urlToCopy = linkElement ? linkElement.dataset.url : '';
+        const urlToCopy = obsLinkElement.dataset.url;
         if (urlToCopy) {
             navigator.clipboard.writeText(urlToCopy);
-            const originalText = copyBtn.innerHTML;
+            const original = copyBtn.innerHTML;
             copyBtn.innerHTML = '<i class="fas fa-check"></i>';
-            setTimeout(() => copyBtn.innerHTML = originalText, 2000);
+            setTimeout(() => copyBtn.innerHTML = original, 2000);
         }
     });
 
-    function updateStatus(active) {
+    function updateUIState(active) {
         if (!startBtn) return;
         startBtn.style.opacity = active ? '0.5' : '1';
-        startBtn.innerHTML = active
-            ? '<i class="fas fa-spinner fa-spin"></i> Ejecutando...'
-            : '<i class="fas fa-play"></i> Iniciar';
+        startBtn.innerHTML = active ? '<i class="fas fa-spinner fa-spin"></i> Ejecutando...' : '<i class="fas fa-play"></i> Iniciar';
         startBtn.style.pointerEvents = active ? 'none' : 'auto';
 
         const dot = document.querySelector('.status-indicator .dot');
         if (dot) {
-            const hasConnections = connections.some(c => c.open);
-            dot.style.backgroundColor = hasConnections ? '#00ff87' : '#94a3b8';
-            dot.style.boxShadow = hasConnections ? '0 0 10px #00ff87' : 'none';
+            const connected = connections.some(c => c.open);
+            dot.style.backgroundColor = connected ? '#00ff87' : '#94a3b8';
+            dot.style.boxShadow = connected ? '0 0 10px #00ff87' : 'none';
         }
-    }
-
-    function createSlot(index, existingImage) {
-        const slot = document.createElement('div');
-        slot.className = 'image-slot';
-        slot.innerHTML = existingImage
-            ? `<img src="${existingImage}"><div class="remove-btn" data-index="${index}"><i class="fas fa-times"></i></div>`
-            : `<span class="slot-label"><i class="fas fa-plus"></i></span><input type="file" accept="image/*" data-index="${index}">`;
-
-        return slot;
     }
 
     function refreshSlots() {
         imageSlots.innerHTML = '';
-        const d = getStorageData();
-        d.images.forEach((img, i) => {
-            const slot = createSlot(i, img);
+        getStorageData().images.forEach((img, i) => {
+            const slot = document.createElement('div');
+            slot.className = 'image-slot';
+            slot.innerHTML = img
+                ? `<img src="${img}"><div class="remove-btn"><i class="fas fa-times"></i></div>`
+                : `<span class="slot-label"><i class="fas fa-plus"></i></span><input type="file" accept="image/*">`;
+
             imageSlots.appendChild(slot);
 
             const input = slot.querySelector('input');
@@ -189,18 +181,18 @@ function initControlPanel() {
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (ev) => {
-                    const d2 = getStorageData();
-                    d2.images[i] = ev.target.result;
-                    if (saveData(d2)) refreshSlots();
+                    const d = getStorageData();
+                    d.images[i] = ev.target.result;
+                    if (saveData(d)) refreshSlots();
                 };
                 reader.readAsDataURL(file);
             });
 
             const rm = slot.querySelector('.remove-btn');
             if (rm) rm.addEventListener('click', () => {
-                const d2 = getStorageData();
-                d2.images[i] = null;
-                saveData(d2);
+                const d = getStorageData();
+                d.images[i] = null;
+                saveData(d);
                 refreshSlots();
             });
         });
@@ -212,104 +204,84 @@ function initOverlay() {
     const container = document.getElementById('slideshow-container');
     let timer = null;
     let currentIndex = 0;
-
-    // Pedir ID al usuario si no está en la URL
     const urlParams = new URLSearchParams(window.location.search);
-    let targetId = urlParams.get('id');
+    const targetId = urlParams.get('id');
 
     if (!targetId) {
-        container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Falta ID de Sesión.</div>';
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Falta ID de Sesión.</div>';
         return;
     }
 
-    container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
-        '<div class="spinner"></div><p style="margin-top: 10px;">Buscando panel de control...</p></div>';
+    function connect() {
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><div class="spinner"></div><p style="margin-top:10px;">Buscando panel...</p></div>';
 
-    peer = new Peer(PEER_CONFIG);
+        if (peer) peer.destroy();
+        peer = new Peer(PEER_CONFIG);
 
-    peer.on('open', () => {
-        connectToPanel();
-    });
+        peer.on('open', () => {
+            const conn = peer.connect(targetId, { reliable: true });
 
-    function connectToPanel() {
-        console.log('Intentando conectar a:', targetId);
-        const conn = peer.connect(targetId, {
-            reliable: true,
-            metadata: { version: '1.2' }
+            const timeout = setTimeout(() => {
+                if (!conn.open) {
+                    conn.close();
+                    setTimeout(connect, 3000);
+                }
+            }, 10000);
+
+            conn.on('open', () => {
+                clearTimeout(timeout);
+                container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><p style="color:#00ff87;">✓ Conectado</p></div>';
+            });
+
+            conn.on('data', (data) => render(data));
+
+            conn.on('close', () => setTimeout(connect, 4000));
+
+            conn.on('error', (err) => {
+                console.error('Conn Error:', err);
+                if (err.type === 'peer-unavailable') {
+                    container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><p style="color:#ff4757;">Panel no encontrado</p></div>';
+                    setTimeout(connect, 5000);
+                }
+            });
         });
 
-        // Timeout de intento individual
-        const connectionTimeout = setTimeout(() => {
-            if (!conn.open) {
-                console.log('Reintentando conexión...');
-                conn.close();
-                setTimeout(connectToPanel, 3000); // Reintentar en 3s
+        peer.on('error', (err) => {
+            console.error('Peer Error:', err.type);
+            if (err.type === 'network') {
+                container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Error de red. Reintentando...</div>';
+                setTimeout(connect, 5000);
             }
-        }, 10000);
-
-        conn.on('open', () => {
-            clearTimeout(connectionTimeout);
-            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
-                '<p style="color: #00ff87;">✓ Conectado al panel</p>' +
-                '<p style="font-size: 0.8rem; color: #999;">Esperando que envíes imágenes...</p></div>';
-        });
-
-        conn.on('data', (data) => {
-            console.log('Datos recibidos:', data);
-            renderSlideshow(data);
-        });
-
-        conn.on('error', (err) => {
-            console.error('Error de conexión:', err);
-            // No alertamos, solo reintentamos si es posible
-            if (err.type === 'peer-unavailable') {
-                container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
-                    '<p style="color: #ff4757;">Panel no encontrado</p>' +
-                    '<p style="font-size: 0.8rem;">Asegúrate de tener el Panel de Control abierto en tu navegador.</p></div>';
-            }
-        });
-
-        conn.on('close', () => {
-            console.log('Conexión cerrada por el panel');
-            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Panel desconectado. Reconectando...</div>';
-            setTimeout(connectToPanel, 5000);
         });
     }
 
-    peer.on('error', (err) => {
-        console.error('Error fatal PeerJS:', err);
-        if (err.type === 'network') {
-            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Error de red. Verifica tu conexión.</div>';
-        }
-    });
+    connect();
 
-    function renderSlideshow(data) {
+    function render(data) {
         container.innerHTML = '';
-        const validImages = data.images.filter(img => img !== null);
+        const valid = data.images.filter(img => img !== null);
 
-        if (!data.active || validImages.length === 0) {
+        if (!data.active || valid.length === 0) {
             if (timer) clearInterval(timer);
-            container.innerHTML = validImages.length === 0
-                ? '<div style="color: white; font-family: sans-serif;">Sin imágenes.</div>'
-                : '<div style="color: white; font-family: sans-serif;">Slideshow detenido.</div>';
+            container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Slideshow detenido.</div>';
             return;
         }
 
-        validImages.forEach((imgSrc, idx) => {
+        valid.forEach((src, idx) => {
             const img = document.createElement('img');
-            img.src = imgSrc;
+            img.src = src;
             img.className = `slide ${idx === 0 ? 'active' : ''}`;
             container.appendChild(img);
         });
 
         currentIndex = 0;
         if (timer) clearInterval(timer);
-        if (validImages.length > 1) {
+        if (valid.length > 1) {
             timer = setInterval(() => {
                 const slides = document.querySelectorAll('.slide');
-                if (slides.length === 0) return;
+                if (!slides.length) return;
                 slides[currentIndex].classList.remove('active');
-                currentIndex = (currentIndex + 1) % validImages.length;
+                currentIndex = (currentIndex + 1) % valid.length;
                 slides[currentIndex].classList.add('active');
             }, data.interval * 1000);
         }
