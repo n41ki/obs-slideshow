@@ -65,6 +65,8 @@ function initControlPanel() {
         obsLinkElement.textContent = fullObsUrl;
         obsLinkElement.dataset.url = fullObsUrl;
     }
+    const syncIdLabel = document.getElementById('sync-id');
+    if (syncIdLabel) syncIdLabel.textContent = SESSION_ID;
 
     // Inicializar Peer (Panel es el Host)
     peer = new Peer(SESSION_ID);
