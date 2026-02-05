@@ -59,10 +59,8 @@ function initControlPanel() {
     peer = new Peer(data.peerId);
 
     peer.on('open', (id) => {
-        syncIdLabel.textContent = id;
-        // Generar URL completa para OBS
-        const baseUrl = window.location.href.split('index.html')[0];
-        const fullObsUrl = `${baseUrl}overlay.html?id=${id}`;
+        // Generar URL completa para OBS con la base solicitada
+        const fullObsUrl = `https://n41ki.github.io/obs-slideshow/overlay.html?id=${id}`;
         const linkElement = document.getElementById('obs-link');
         if (linkElement) {
             linkElement.textContent = fullObsUrl;
