@@ -216,63 +216,22 @@ function initOverlay() {
     const targetId = urlParams.get('id');
 
     if (!targetId) {
-        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Falta ID de Sesión.</div>';
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Falta ID de Sesión en la URL.</div>';
         return;
     }
 
-    function connect() {
-        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><div class="spinner"></div><p style="margin-top:10px;">Buscando panel...</p></div>';
-
-        if (peer) peer.destroy();
-        peer = new Peer(PEER_CONFIG);
-
-        peer.on('open', () => {
-            const conn = peer.connect(targetId, { reliable: true });
-
-            const timeout = setTimeout(() => {
-                if (!conn.open) {
-                    conn.close();
-                    setTimeout(connect, 3000);
-                }
-            }, 10000);
-
-            conn.on('open', () => {
-                clearTimeout(timeout);
-                container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><p style="color:#00ff87;">✓ Conectado</p></div>';
-            });
-
-            conn.on('data', (data) => window.renderSlideshowData(data));
-
-            conn.on('close', () => setTimeout(connect, 4000));
-
-            conn.on('error', (err) => {
-                console.error('Conn Error:', err);
-                if (err.type === 'peer-unavailable') {
-                    container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><p style="color:#ff4757;">Panel no encontrado</p></div>';
-                    setTimeout(connect, 5000);
-                }
-            });
-        });
-
-        peer.on('error', (err) => {
-            console.error('Peer Error:', err.type);
-            if (err.type === 'network') {
-                container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Error de red. Reintentando...</div>';
-                setTimeout(connect, 5000);
-            }
-        });
-    }
-
-    connect();
-
-    // Exportar función de renderizado para el fallback local
+    // Exportar función de renderizado
     window.renderSlideshowData = function (data) {
+        // Solo renderizar si el peerId coincide (para evitar conflictos si hay varias pestañas)
+        // O si no hay peerId (fallback local puro)
+        if (data.peerId && data.peerId !== targetId) return;
+
         container.innerHTML = '';
         const valid = data.images.filter(img => img !== null);
 
         if (!data.active || valid.length === 0) {
             if (timer) clearInterval(timer);
-            container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Slideshow detenido.</div>';
+            container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">Slideshow detenido o sin imágenes.</div>';
             return;
         }
 
@@ -295,4 +254,42 @@ function initOverlay() {
             }, data.interval * 1000);
         }
     };
+
+    // 1. INTENTO DE CARGA LOCAL INMEDIATA (Mismo PC)
+    const localData = getStorageData();
+    if (localData && localData.images.some(i => i !== null)) {
+        console.log('Cargando datos locales iniciales...');
+        window.renderSlideshowData(localData);
+    } else {
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">' +
+            '<div class="spinner"></div><p style="margin-top:10px;">Esperando datos del panel...</p></div>';
+    }
+
+    // 2. CONEXIÓN P2P EN SEGUNDO PLANO (Control remoto)
+    function connect() {
+        if (peer) peer.destroy();
+        peer = new Peer(PEER_CONFIG);
+
+        peer.on('open', () => {
+            const conn = peer.connect(targetId, { reliable: true });
+
+            conn.on('open', () => {
+                console.log('Conectado vía P2P');
+                // No sobreescribimos el UI si ya hay imágenes cargadas localmente
+            });
+
+            conn.on('data', (data) => window.renderSlideshowData(data));
+            conn.on('close', () => setTimeout(connect, 5000));
+            conn.on('error', () => setTimeout(connect, 5000));
+        });
+
+        peer.on('error', (err) => {
+            console.warn('Error P2P (Ignorable si estás en el mismo PC):', err.type);
+            if (err.type === 'network' || err.type === 'server-error') {
+                setTimeout(connect, 10000);
+            }
+        });
+    }
+
+    connect();
 }
