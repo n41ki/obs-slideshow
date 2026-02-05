@@ -1,11 +1,21 @@
 /**
  * IRL-Overlays Script (P2P Version)
- * Sincronización en tiempo real sin servidor usando PeerJS.
+ * Sincronización en tiempo real sin servidor usando PeerJS + LocalStorage Fallback.
  */
 
-const STORAGE_KEY = 'obs_slideshow_data';
+const STORAGE_PREFIX = 'irl_obs_data_';
 let peer = null;
 let connections = [];
+
+/**
+ * --- UTILS ---
+ */
+function getKeys(id) {
+    return STORAGE_PREFIX + id;
+}
+
+// Generar un ID único para esta pestaña (Panel)
+const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,27 +25,10 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         initOverlay();
     }
-
-    // Sincronización Local Fallback (Mismo PC/Navegador)
-    window.addEventListener('storage', (e) => {
-        if (e.key === STORAGE_KEY && !isControlPanel) {
-            try {
-                const data = JSON.parse(e.newValue);
-                if (window.renderSlideshowData) {
-                    window.renderSlideshowData(data);
-                }
-            } catch (err) {
-                console.error('Error parseando datos de storage:', err);
-            }
-        }
-    });
 });
 
-// Generar un ID único para esta sesión de pestaña
-const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
-
 const PEER_CONFIG = {
-    debug: 2,
+    debug: 1,
     config: {
         'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -46,43 +39,43 @@ const PEER_CONFIG = {
     }
 };
 
-// --- SHARED DATA UTILS ---
+/**
+ * --- SHARED DATA UTILS ---
+ */
 function broadcast(data) {
     connections = connections.filter(conn => conn.open);
     connections.forEach(conn => conn.send(data));
 }
 
-function getStorageData() {
+function getStoredData(id) {
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : {
-            images: [null, null, null, null, null],
-            interval: 5,
-            active: false
-        };
+        const raw = localStorage.getItem(getKeys(id));
+        return raw ? JSON.parse(raw) : null;
     } catch (e) {
-        return { images: [null, null, null, null, null], interval: 5, active: false };
+        return null;
     }
 }
 
-function saveData(data) {
+function saveData(data, id) {
     try {
-        // Adjuntar el SESSION_ID del panel para que el Overlay sepa de quién viene
-        data.peerId = SESSION_ID;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem(getKeys(id), JSON.stringify(data));
         broadcast(data);
         return true;
     } catch (e) {
-        alert('Error: Imágenes demasiado pesadas. Intenta con archivos inferiores a 1MB.');
+        alert('Error: Imágenes demasiado pesadas. Usa archivos < 1MB.');
         return false;
     }
 }
 
-// --- CONTROL PANEL LOGIC ---
+/**
+ * --- CONTROL PANEL LOGIC ---
+ */
 function initControlPanel() {
-    localStorage.removeItem(STORAGE_KEY); // Limpieza al refrescar
+    // Limpieza de sesiones antiguas al azar para no llenar el storage
+    Object.keys(localStorage).forEach(k => {
+        if (k.startsWith(STORAGE_PREFIX)) localStorage.removeItem(k);
+    });
 
-    const data = getStorageData();
     const imageSlots = document.getElementById('image-slots');
     const intervalInput = document.getElementById('interval');
     const startBtn = document.getElementById('start-btn');
@@ -91,6 +84,15 @@ function initControlPanel() {
     const obsLinkElement = document.getElementById('obs-link');
     const syncIdLabel = document.getElementById('sync-id');
 
+    // Estado inicial
+    let state = {
+        images: [null, null, null, null, null],
+        interval: 5,
+        active: false,
+        peerId: SESSION_ID
+    };
+
+    // UI Link
     const fullObsUrl = `https://n41ki.github.io/obs-slideshow/overlay.html?id=${SESSION_ID}`;
     if (obsLinkElement) {
         obsLinkElement.textContent = fullObsUrl;
@@ -102,71 +104,52 @@ function initControlPanel() {
         if (peer) peer.destroy();
         peer = new Peer(SESSION_ID, PEER_CONFIG);
 
-        peer.on('open', (id) => console.log('Panel listo:', id));
-
         peer.on('connection', (conn) => {
             connections.push(conn);
-            conn.on('open', () => {
-                conn.send(getStorageData());
-                updateUIState(getStorageData().active);
-            });
+            conn.on('open', () => conn.send(state));
             conn.on('close', () => {
                 connections = connections.filter(c => c.peer !== conn.peer);
-                updateUIState(getStorageData().active);
+                updateUI();
             });
         });
 
         peer.on('error', (err) => {
-            console.error('Peer Error:', err.type);
-            if (err.type === 'network' || err.type === 'server-error') {
-                setTimeout(startPeer, 5000);
-            }
+            if (err.type === 'network' || err.type === 'server-error') setTimeout(startPeer, 5000);
         });
     }
 
     startPeer();
 
-    // UI Setup
-    intervalInput.value = data.interval;
-    refreshSlots();
-    updateUIState(data.active);
-
+    // Eventos UI
     intervalInput.addEventListener('change', () => {
-        const d = getStorageData();
-        d.interval = parseInt(intervalInput.value) || 5;
-        saveData(d);
+        state.interval = parseInt(intervalInput.value) || 5;
+        saveData(state, SESSION_ID);
     });
 
     startBtn.addEventListener('click', () => {
-        const d = getStorageData();
-        if (!d.images.some(img => img !== null)) return alert('Inserta imágenes primero.');
-        d.active = true;
-        saveData(d);
-        updateUIState(true);
+        if (!state.images.some(img => img !== null)) return alert('Sube imágenes primero.');
+        state.active = true;
+        saveData(state, SESSION_ID);
+        updateUI();
     });
 
     stopBtn.addEventListener('click', () => {
-        const d = getStorageData();
-        d.active = false;
-        saveData(d);
-        updateUIState(false);
+        state.active = false;
+        saveData(state, SESSION_ID);
+        updateUI();
     });
 
     copyBtn.addEventListener('click', () => {
-        const urlToCopy = obsLinkElement.dataset.url;
-        if (urlToCopy) {
-            navigator.clipboard.writeText(urlToCopy);
-            const original = copyBtn.innerHTML;
-            copyBtn.innerHTML = '<i class="fas fa-check"></i>';
-            setTimeout(() => copyBtn.innerHTML = original, 2000);
-        }
+        navigator.clipboard.writeText(obsLinkElement.dataset.url);
+        const original = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+        setTimeout(() => copyBtn.innerHTML = original, 2000);
     });
 
-    function updateUIState(active) {
-        if (!startBtn) return;
-        startBtn.style.opacity = active ? '0.5' : '1';
-        startBtn.innerHTML = active ? '<i class="fas fa-spinner fa-spin"></i> Ejecutando...' : '<i class="fas fa-play"></i> Iniciar';
-        startBtn.style.pointerEvents = active ? 'none' : 'auto';
+    function updateUI() {
+        startBtn.style.opacity = state.active ? '0.5' : '1';
+        startBtn.innerHTML = state.active ? '<i class="fas fa-spinner fa-spin"></i> Ejecutando...' : '<i class="fas fa-play"></i> Iniciar';
+        startBtn.style.pointerEvents = state.active ? 'none' : 'auto';
 
         const dot = document.querySelector('.status-indicator .dot');
         if (dot) {
@@ -178,7 +161,7 @@ function initControlPanel() {
 
     function refreshSlots() {
         imageSlots.innerHTML = '';
-        getStorageData().images.forEach((img, i) => {
+        state.images.forEach((img, i) => {
             const slot = document.createElement('div');
             slot.className = 'image-slot';
             slot.innerHTML = img
@@ -186,32 +169,35 @@ function initControlPanel() {
                 : `<span class="slot-label"><i class="fas fa-plus"></i></span><input type="file" accept="image/*">`;
 
             imageSlots.appendChild(slot);
-
             const input = slot.querySelector('input');
-            if (input) input.addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    const d = getStorageData();
-                    d.images[i] = ev.target.result;
-                    if (saveData(d)) refreshSlots();
-                };
-                reader.readAsDataURL(file);
-            });
-
+            if (input) {
+                input.addEventListener('change', (e) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        state.images[i] = ev.target.result;
+                        if (saveData(state, SESSION_ID)) refreshSlots();
+                    };
+                    reader.readAsDataURL(e.target.files[0]);
+                });
+            }
             const rm = slot.querySelector('.remove-btn');
-            if (rm) rm.addEventListener('click', () => {
-                const d = getStorageData();
-                d.images[i] = null;
-                saveData(d);
-                refreshSlots();
-            });
+            if (rm) {
+                rm.addEventListener('click', () => {
+                    state.images[i] = null;
+                    saveData(state, SESSION_ID);
+                    refreshSlots();
+                });
+            }
         });
     }
+
+    refreshSlots();
+    updateUI();
 }
 
-// --- OVERLAY LOGIC ---
+/**
+ * --- OVERLAY LOGIC ---
+ */
 function initOverlay() {
     const container = document.getElementById('slideshow-container');
     let timer = null;
@@ -220,24 +206,28 @@ function initOverlay() {
     const targetId = urlParams.get('id');
 
     if (!targetId) {
-        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">Falta ID de Sesión en la URL.</div>';
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Error: Falta ID de Sesión.</div>';
         return;
     }
 
-    // Exportar función de renderizado para recibir datos externos
-    window.renderSlideshowData = function (data) {
-        // VALIDACIÓN CRÍTICA: Los datos deben ser para este ID de sesión
-        if (!data || data.peerId !== targetId) {
-            console.log('Ignorando datos de otra sesión');
-            return;
+    // LISTENER DE STORAGE (Sincronización instantánea en mismo PC)
+    window.addEventListener('storage', (e) => {
+        if (e.key === getKeys(targetId)) {
+            console.log('Update local detectado para ID:', targetId);
+            render(JSON.parse(e.newValue));
         }
+    });
+
+    function render(data) {
+        if (!data || data.peerId !== targetId) return;
 
         container.innerHTML = '';
         const valid = data.images.filter(img => img !== null);
 
         if (!data.active || valid.length === 0) {
             if (timer) clearInterval(timer);
-            container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">Slideshow detenido o sin imágenes.</div>';
+            container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">' +
+                '<div class="spinner"></div><p style="margin-top:10px;">Esperando imágenes...</p></div>';
             return;
         }
 
@@ -259,36 +249,27 @@ function initOverlay() {
                 slides[currentIndex].classList.add('active');
             }, (data.interval || 5) * 1000);
         }
-    };
-
-    // 1. CARGA INICIAL (Si ya hay datos en LocalStorage para este ID)
-    const initialData = getStorageData();
-    if (initialData && initialData.peerId === targetId) {
-        window.renderSlideshowData(initialData);
-    } else {
-        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">' +
-            '<div class="spinner"></div><p style="margin-top:10px;">Iniciando sistema de sincronización...</p></div>';
     }
 
-    // 2. CONEXIÓN P2P (Fallback para control remoto)
+    // Intento de carga inicial
+    const initial = getStoredData(targetId);
+    if (initial) render(initial);
+    else {
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">' +
+            '<div class="spinner"></div><p style="margin-top:10px;">Enlazando con el panel...</p></div>';
+    }
+
+    // Conexión PeerJS (Control remoto)
     function connect() {
         if (peer) peer.destroy();
         peer = new Peer(PEER_CONFIG);
-
         peer.on('open', () => {
             const conn = peer.connect(targetId, { reliable: true });
-            conn.on('open', () => console.log('Vínculo P2P establecido'));
-            conn.on('data', (data) => window.renderSlideshowData(data));
+            conn.on('data', (data) => render(data));
             conn.on('close', () => setTimeout(connect, 5000));
             conn.on('error', () => setTimeout(connect, 5000));
         });
-
-        peer.on('error', (err) => {
-            console.warn('Estado P2P:', err.type);
-            if (err.type === 'network' || err.type === 'server-error') {
-                setTimeout(connect, 10000);
-            }
-        });
+        peer.on('error', () => setTimeout(connect, 10000));
     }
 
     connect();
