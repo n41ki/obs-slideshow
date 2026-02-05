@@ -13,8 +13,8 @@ Aplicación simple para OBS Studio que permite gestionar un carrusel de imágene
 ## ⚙️ Configuración
 
 ### 1. Panel de Control
-Abre la URL de tu repositorio en tu navegador normal (Chrome, Edge, etc.):
-`https://tu-usuario.github.io/tu-repo/index.html`
+Abre el panel en tu navegador:
+[https://n41ki.github.io/obs-slideshow/index.html](https://n41ki.github.io/obs-slideshow/index.html)
 - Inserta tus imágenes.
 - Configura los segundos.
 - Haz clic en **"Iniciar Slideshow"**.
@@ -22,7 +22,7 @@ Abre la URL de tu repositorio en tu navegador normal (Chrome, Edge, etc.):
 
 ### 2. En OBS Studio
 Añade una fuente de **Navegador** con la URL del overlay:
-`https://tu-usuario.github.io/tu-repo/overlay.html?id=TU_ID_AQUÍ`
+`https://n41ki.github.io/obs-slideshow/overlay.html?id=TU_ID_AQUÍ`
 *(Sustituye `TU_ID_AQUÍ` por el ID que copiaste en el panel)*
 
 ## 🛠️ Tecnologías
