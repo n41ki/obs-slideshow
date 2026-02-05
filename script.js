@@ -60,6 +60,15 @@ function initControlPanel() {
 
     peer.on('open', (id) => {
         syncIdLabel.textContent = id;
+        // Generar URL completa para OBS
+        const baseUrl = window.location.href.split('index.html')[0];
+        const fullObsUrl = `${baseUrl}overlay.html?id=${id}`;
+        const linkElement = document.getElementById('obs-link');
+        if (linkElement) {
+            linkElement.textContent = fullObsUrl;
+            // Guardar para el botón copiar
+            linkElement.dataset.url = fullObsUrl;
+        }
         console.log('ID de Panel:', id);
     });
 
@@ -98,9 +107,13 @@ function initControlPanel() {
     });
 
     copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(data.peerId);
-        copyBtn.textContent = '¡Copiado!';
-        setTimeout(() => copyBtn.textContent = 'Copiar ID', 2000);
+        const linkElement = document.getElementById('obs-link');
+        const urlToCopy = linkElement ? linkElement.dataset.url : '';
+        if (urlToCopy) {
+            navigator.clipboard.writeText(urlToCopy);
+            copyBtn.textContent = '¡Copiado!';
+            setTimeout(() => copyBtn.textContent = 'Copiar Link', 2000);
+        }
     });
 
     function updateStatus(active) {
