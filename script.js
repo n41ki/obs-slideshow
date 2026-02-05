@@ -5,7 +5,7 @@
 
 const STORAGE_KEY = 'obs_slideshow_data';
 let peer = null;
-let connection = null;
+let connections = []; // Soporte para múltiples conexiones (múltiples OBS o refrescos)
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -21,6 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
 const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
 
 // --- SHARED DATA UTILS ---
+function broadcast(data) {
+    connections = connections.filter(conn => conn.open);
+    connections.forEach(conn => conn.send(data));
+}
+
 function getStorageData() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
@@ -29,7 +34,6 @@ function getStorageData() {
             interval: 5,
             active: false
         };
-        // Siempre usamos el ID único de esta pestaña
         return { ...baseData, peerId: SESSION_ID };
     } catch (e) {
         return { images: [null, null, null, null, null], interval: 5, active: false, peerId: SESSION_ID };
@@ -39,12 +43,10 @@ function getStorageData() {
 function saveData(data) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        if (connection && connection.open) {
-            connection.send(data); // Enviar al overlay en tiempo real
-        }
+        broadcast(data); // Enviar a todos los overlays conectados
         return true;
     } catch (e) {
-        alert('Error: Imágenes demasiado pesadas. Intenta con archivos más pequeños (menos de 2MB).');
+        alert('Error: Imágenes demasiado pesadas. Intenta con archivos inferiores a 1MB.');
         return false;
     }
 }
@@ -58,6 +60,7 @@ function initControlPanel() {
     const stopBtn = document.getElementById('stop-btn');
     const copyBtn = document.getElementById('copy-btn');
     const obsLinkElement = document.getElementById('obs-link');
+    const syncIdLabel = document.getElementById('sync-id');
 
     // Generar y mostrar link INMEDIATAMENTE
     const fullObsUrl = `https://n41ki.github.io/obs-slideshow/overlay.html?id=${SESSION_ID}`;
@@ -65,7 +68,6 @@ function initControlPanel() {
         obsLinkElement.textContent = fullObsUrl;
         obsLinkElement.dataset.url = fullObsUrl;
     }
-    const syncIdLabel = document.getElementById('sync-id');
     if (syncIdLabel) syncIdLabel.textContent = SESSION_ID;
 
     // Inicializar Peer (Panel es el Host)
@@ -76,11 +78,25 @@ function initControlPanel() {
     });
 
     peer.on('connection', (conn) => {
-        connection = conn;
-        console.log('Overlay conectado');
+        connections.push(conn);
+        console.log('Nuevo overlay conectado:', conn.peer);
+
         conn.on('open', () => {
-            conn.send(getStorageData()); // Enviar datos actuales al conectar
+            conn.send(getStorageData());
+            updateStatus(getStorageData().active);
         });
+
+        conn.on('close', () => {
+            connections = connections.filter(c => c.peer !== conn.peer);
+            console.log('Overlay desconectado');
+        });
+    });
+
+    peer.on('error', (err) => {
+        console.error('Error PeerJS:', err);
+        if (err.type === 'unavailable-id') {
+            alert('Error: El ID ya está en uso. Refresca la página para generar uno nuevo.');
+        }
     });
 
     // UI Setup
@@ -114,8 +130,9 @@ function initControlPanel() {
         const urlToCopy = linkElement ? linkElement.dataset.url : '';
         if (urlToCopy) {
             navigator.clipboard.writeText(urlToCopy);
-            copyBtn.textContent = '¡Copiado!';
-            setTimeout(() => copyBtn.textContent = 'Copiar Link', 2000);
+            const originalText = copyBtn.innerHTML;
+            copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+            setTimeout(() => copyBtn.innerHTML = originalText, 2000);
         }
     });
 
@@ -127,11 +144,11 @@ function initControlPanel() {
             : '<i class="fas fa-play"></i> Iniciar';
         startBtn.style.pointerEvents = active ? 'none' : 'auto';
 
-        // Update sidebar status dot if needed
         const dot = document.querySelector('.status-indicator .dot');
         if (dot) {
-            dot.style.backgroundColor = active ? '#22c55e' : '#a1a1aa';
-            dot.style.boxShadow = active ? '0 0 8px #22c55e' : 'none';
+            const hasConnections = connections.some(c => c.open);
+            dot.style.backgroundColor = hasConnections ? '#00ff87' : '#94a3b8';
+            dot.style.boxShadow = hasConnections ? '0 0 10px #00ff87' : 'none';
         }
     }
 
@@ -187,22 +204,32 @@ function initOverlay() {
     let targetId = urlParams.get('id');
 
     if (!targetId) {
-        targetId = prompt('Introduce el ID de Sesión del Panel de Control:');
-    }
-
-    if (!targetId) {
-        container.innerHTML = '<div style="color: white; font-family: sans-serif;">Falta ID de Sesión.</div>';
+        container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Falta ID de Sesión.</div>';
         return;
     }
 
-    container.innerHTML = '<div style="color: white; font-family: sans-serif;">Conectando al panel...</div>';
+    container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Conectando al panel de control...</div>';
 
     peer = new Peer();
 
     peer.on('open', () => {
-        const conn = peer.connect(targetId);
+        const conn = peer.connect(targetId, {
+            reliable: true
+        });
+
+        // Timeout si no conecta en 15 segundos
+        const timeout = setTimeout(() => {
+            if (!conn.open) {
+                container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
+                    '<h2 style="margin-bottom: 10px;">Error de Conexión</h2>' +
+                    '<p>No se pudo conectar con el Panel de Control.</p>' +
+                    '<p style="font-size: 0.8rem; color: #999; margin-top: 10px;">Asegúrate de que la pestaña del Panel esté abierta y visible.</p></div>';
+            }
+        }, 15000);
+
         conn.on('open', () => {
-            container.innerHTML = '<div style="color: white; font-family: sans-serif;">Conectado. Esperando comando.</div>';
+            clearTimeout(timeout);
+            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Conectado. Esperando imágenes...</div>';
         });
 
         conn.on('data', (data) => {
@@ -210,9 +237,19 @@ function initOverlay() {
             renderSlideshow(data);
         });
 
-        conn.on('close', () => {
-            container.innerHTML = '<div style="color: white; font-family: sans-serif;">Conexión perdida.</div>';
+        conn.on('error', (err) => {
+            console.error('Error de conexión:', err);
+            container.innerHTML = `<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Error: ${err.type}</div>`;
         });
+
+        conn.on('close', () => {
+            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Panel desconectado.</div>';
+        });
+    });
+
+    peer.on('error', (err) => {
+        console.error('Error PeerJS:', err);
+        container.innerHTML = `<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Error de Red: ${err.type}</div>`;
     });
 
     function renderSlideshow(data) {
