@@ -15,15 +15,24 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         initOverlay();
     }
+
+    // Sincronización Local Fallback (Mismo PC/Navegador)
+    window.addEventListener('storage', (e) => {
+        if (e.key === STORAGE_KEY && !isControlPanel) {
+            console.log('Sincronización local detectada');
+            const data = JSON.parse(e.newValue);
+            if (window.renderSlideshowData) {
+                window.renderSlideshowData(data);
+            }
+        }
+    });
 });
 
 // Generar un ID único para esta sesión de pestaña
 const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
 
 const PEER_CONFIG = {
-    host: '0.peerjs.com',
-    port: 443,
-    secure: true,
+    debug: 2, // Más info para diagnosticar
     config: {
         'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -31,8 +40,7 @@ const PEER_CONFIG = {
             { urls: 'stun:stun2.l.google.com:19302' },
         ],
         'sdpSemantics': 'unified-plan'
-    },
-    debug: 1
+    }
 };
 
 // --- SHARED DATA UTILS ---
@@ -233,7 +241,7 @@ function initOverlay() {
                 container.innerHTML = '<div style="color:white;text-align:center;padding:20px;"><p style="color:#00ff87;">✓ Conectado</p></div>';
             });
 
-            conn.on('data', (data) => render(data));
+            conn.on('data', (data) => window.renderSlideshowData(data));
 
             conn.on('close', () => setTimeout(connect, 4000));
 
@@ -257,7 +265,8 @@ function initOverlay() {
 
     connect();
 
-    function render(data) {
+    // Exportar función de renderizado para el fallback local
+    window.renderSlideshowData = function (data) {
         container.innerHTML = '';
         const valid = data.images.filter(img => img !== null);
 
@@ -285,5 +294,5 @@ function initOverlay() {
                 slides[currentIndex].classList.add('active');
             }, data.interval * 1000);
         }
-    }
+    };
 }
