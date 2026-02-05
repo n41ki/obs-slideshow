@@ -19,10 +19,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sincronización Local Fallback (Mismo PC/Navegador)
     window.addEventListener('storage', (e) => {
         if (e.key === STORAGE_KEY && !isControlPanel) {
-            console.log('Sincronización local detectada');
-            const data = JSON.parse(e.newValue);
-            if (window.renderSlideshowData) {
-                window.renderSlideshowData(data);
+            try {
+                const data = JSON.parse(e.newValue);
+                if (window.renderSlideshowData) {
+                    window.renderSlideshowData(data);
+                }
+            } catch (err) {
+                console.error('Error parseando datos de storage:', err);
             }
         }
     });
@@ -32,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
 const SESSION_ID = 'obs-' + Math.random().toString(36).substr(2, 6);
 
 const PEER_CONFIG = {
-    debug: 2, // Más info para diagnosticar
+    debug: 2,
     config: {
         'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -52,19 +55,20 @@ function broadcast(data) {
 function getStorageData() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        const baseData = raw ? JSON.parse(raw) : {
+        return raw ? JSON.parse(raw) : {
             images: [null, null, null, null, null],
             interval: 5,
             active: false
         };
-        return { ...baseData, peerId: SESSION_ID };
     } catch (e) {
-        return { images: [null, null, null, null, null], interval: 5, active: false, peerId: SESSION_ID };
+        return { images: [null, null, null, null, null], interval: 5, active: false };
     }
 }
 
 function saveData(data) {
     try {
+        // Adjuntar el SESSION_ID del panel para que el Overlay sepa de quién viene
+        data.peerId = SESSION_ID;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         broadcast(data);
         return true;
@@ -76,7 +80,7 @@ function saveData(data) {
 
 // --- CONTROL PANEL LOGIC ---
 function initControlPanel() {
-    localStorage.removeItem(STORAGE_KEY); // Reset on refresh
+    localStorage.removeItem(STORAGE_KEY); // Limpieza al refrescar
 
     const data = getStorageData();
     const imageSlots = document.getElementById('image-slots');
@@ -216,15 +220,17 @@ function initOverlay() {
     const targetId = urlParams.get('id');
 
     if (!targetId) {
-        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">Falta ID de Sesión en la URL.</div>';
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">Falta ID de Sesión en la URL.</div>';
         return;
     }
 
-    // Exportar función de renderizado
+    // Exportar función de renderizado para recibir datos externos
     window.renderSlideshowData = function (data) {
-        // Solo renderizar si el peerId coincide (para evitar conflictos si hay varias pestañas)
-        // O si no hay peerId (fallback local puro)
-        if (data.peerId && data.peerId !== targetId) return;
+        // VALIDACIÓN CRÍTICA: Los datos deben ser para este ID de sesión
+        if (!data || data.peerId !== targetId) {
+            console.log('Ignorando datos de otra sesión');
+            return;
+        }
 
         container.innerHTML = '';
         const valid = data.images.filter(img => img !== null);
@@ -251,40 +257,34 @@ function initOverlay() {
                 slides[currentIndex].classList.remove('active');
                 currentIndex = (currentIndex + 1) % valid.length;
                 slides[currentIndex].classList.add('active');
-            }, data.interval * 1000);
+            }, (data.interval || 5) * 1000);
         }
     };
 
-    // 1. INTENTO DE CARGA LOCAL INMEDIATA (Mismo PC)
-    const localData = getStorageData();
-    if (localData && localData.images.some(i => i !== null)) {
-        console.log('Cargando datos locales iniciales...');
-        window.renderSlideshowData(localData);
+    // 1. CARGA INICIAL (Si ya hay datos en LocalStorage para este ID)
+    const initialData = getStorageData();
+    if (initialData && initialData.peerId === targetId) {
+        window.renderSlideshowData(initialData);
     } else {
         container.innerHTML = '<div style="color:white;text-align:center;padding:20px;font-family:sans-serif;">' +
-            '<div class="spinner"></div><p style="margin-top:10px;">Esperando datos del panel...</p></div>';
+            '<div class="spinner"></div><p style="margin-top:10px;">Iniciando sistema de sincronización...</p></div>';
     }
 
-    // 2. CONEXIÓN P2P EN SEGUNDO PLANO (Control remoto)
+    // 2. CONEXIÓN P2P (Fallback para control remoto)
     function connect() {
         if (peer) peer.destroy();
         peer = new Peer(PEER_CONFIG);
 
         peer.on('open', () => {
             const conn = peer.connect(targetId, { reliable: true });
-
-            conn.on('open', () => {
-                console.log('Conectado vía P2P');
-                // No sobreescribimos el UI si ya hay imágenes cargadas localmente
-            });
-
+            conn.on('open', () => console.log('Vínculo P2P establecido'));
             conn.on('data', (data) => window.renderSlideshowData(data));
             conn.on('close', () => setTimeout(connect, 5000));
             conn.on('error', () => setTimeout(connect, 5000));
         });
 
         peer.on('error', (err) => {
-            console.warn('Error P2P (Ignorable si estás en el mismo PC):', err.type);
+            console.warn('Estado P2P:', err.type);
             if (err.type === 'network' || err.type === 'server-error') {
                 setTimeout(connect, 10000);
             }
