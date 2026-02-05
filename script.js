@@ -64,6 +64,9 @@ const PEER_CONFIG = {
 
 // --- CONTROL PANEL LOGIC ---
 function initControlPanel() {
+    // Limpiar almacenamiento al cargar/refrescar (según petición del usuario)
+    localStorage.removeItem(STORAGE_KEY);
+
     const data = getStorageData();
     const imageSlots = document.getElementById('image-slots');
     const intervalInput = document.getElementById('interval');
