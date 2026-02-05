@@ -51,6 +51,17 @@ function saveData(data) {
     }
 }
 
+const PEER_CONFIG = {
+    config: {
+        'iceServers': [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+        ]
+    },
+    debug: 1 // Solo errores en consola
+};
+
 // --- CONTROL PANEL LOGIC ---
 function initControlPanel() {
     const data = getStorageData();
@@ -70,11 +81,11 @@ function initControlPanel() {
     }
     if (syncIdLabel) syncIdLabel.textContent = SESSION_ID;
 
-    // Inicializar Peer (Panel es el Host)
-    peer = new Peer(SESSION_ID);
+    // Inicializar Peer (Panel es el Host) con STUN
+    peer = new Peer(SESSION_ID, PEER_CONFIG);
 
     peer.on('open', (id) => {
-        console.log('ID de Panel listo:', id);
+        console.log('Panel listo con ID:', id);
     });
 
     peer.on('connection', (conn) => {
@@ -208,28 +219,36 @@ function initOverlay() {
         return;
     }
 
-    container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Conectando al panel de control...</div>';
+    container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
+        '<div class="spinner"></div><p style="margin-top: 10px;">Buscando panel de control...</p></div>';
 
-    peer = new Peer();
+    peer = new Peer(PEER_CONFIG);
 
     peer.on('open', () => {
+        connectToPanel();
+    });
+
+    function connectToPanel() {
+        console.log('Intentando conectar a:', targetId);
         const conn = peer.connect(targetId, {
-            reliable: true
+            reliable: true,
+            metadata: { version: '1.2' }
         });
 
-        // Timeout si no conecta en 15 segundos
-        const timeout = setTimeout(() => {
+        // Timeout de intento individual
+        const connectionTimeout = setTimeout(() => {
             if (!conn.open) {
-                container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
-                    '<h2 style="margin-bottom: 10px;">Error de Conexión</h2>' +
-                    '<p>No se pudo conectar con el Panel de Control.</p>' +
-                    '<p style="font-size: 0.8rem; color: #999; margin-top: 10px;">Asegúrate de que la pestaña del Panel esté abierta y visible.</p></div>';
+                console.log('Reintentando conexión...');
+                conn.close();
+                setTimeout(connectToPanel, 3000); // Reintentar en 3s
             }
-        }, 15000);
+        }, 10000);
 
         conn.on('open', () => {
-            clearTimeout(timeout);
-            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Conectado. Esperando imágenes...</div>';
+            clearTimeout(connectionTimeout);
+            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
+                '<p style="color: #00ff87;">✓ Conectado al panel</p>' +
+                '<p style="font-size: 0.8rem; color: #999;">Esperando que envíes imágenes...</p></div>';
         });
 
         conn.on('data', (data) => {
@@ -239,17 +258,26 @@ function initOverlay() {
 
         conn.on('error', (err) => {
             console.error('Error de conexión:', err);
-            container.innerHTML = `<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Error: ${err.type}</div>`;
+            // No alertamos, solo reintentamos si es posible
+            if (err.type === 'peer-unavailable') {
+                container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">' +
+                    '<p style="color: #ff4757;">Panel no encontrado</p>' +
+                    '<p style="font-size: 0.8rem;">Asegúrate de tener el Panel de Control abierto en tu navegador.</p></div>';
+            }
         });
 
         conn.on('close', () => {
-            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Panel desconectado.</div>';
+            console.log('Conexión cerrada por el panel');
+            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Panel desconectado. Reconectando...</div>';
+            setTimeout(connectToPanel, 5000);
         });
-    });
+    }
 
     peer.on('error', (err) => {
-        console.error('Error PeerJS:', err);
-        container.innerHTML = `<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Error de Red: ${err.type}</div>`;
+        console.error('Error fatal PeerJS:', err);
+        if (err.type === 'network') {
+            container.innerHTML = '<div style="color: white; font-family: sans-serif; text-align: center; padding: 20px;">Error de red. Verifica tu conexión.</div>';
+        }
     });
 
     function renderSlideshow(data) {
